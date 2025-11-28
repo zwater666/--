@@ -1,50 +1,112 @@
-// --- API Helper ---
-const API_URL = 'http://localhost:5000/api'; // 你的本地后端地址
+// @ts-nocheck
+/**
+ * === 增强的 API 客户端与数据同步系统 ===
+ * 支持自动重试、错误恢复和数据持久化
+ */
 
-const api = {
-  async login(email, password) {
-    const res = await fetch(`${API_URL}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    return res.json();
-  },
-  
-  async register(username, email, password) {
-    const res = await fetch(`${API_URL}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password })
-    });
-    return res.json();
-  },
-
-  async getPortfolio(token) {
-    const res = await fetch(`${API_URL}/portfolio`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    return res.json();
-  },
-
-  async trade(token, tradeData) {
-    const res = await fetch(`${API_URL}/trade`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(tradeData)
-    });
-    return res.json();
-  }
-};
-
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, ReferenceLine, BarChart, Bar
 } from 'recharts';
+
+// ============ 简易 API 客户端（带重试机制）============
+const API_BASE = (() => {
+  // 优先使用环境变量，其次使用当前域名推断
+  if (typeof process !== 'undefined' && process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  // 浏览器环境：本地开发使用 localhost:5000，其他环境使用相同域名
+  if (typeof window !== 'undefined') {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    return isLocal ? 'http://localhost:5000/api' : '/api';
+  }
+  return 'http://localhost:5000/api';
+})();
+
+const fetchWithRetry = async (url, options = {}, maxRetries = 3) => {
+  let lastError;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('认证失败，请重新登录');
+        }
+        if (response.status >= 400 && response.status < 500) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || `请求失败: ${response.status}`);
+        }
+        throw new Error(`服务器错误: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      const shouldRetry = attempt < maxRetries - 1 && 
+        (error.name === 'AbortError' || error.message.includes('服务器错误') || !navigator.onLine);
+      
+      if (shouldRetry) {
+        const delay = 1000 * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw lastError;
+};
+
+const api = {
+  async login(email, password) {
+    return fetchWithRetry(`${API_BASE}/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  },
+  
+  async register(username, email, password) {
+    return fetchWithRetry(`${API_BASE}/register`, {
+      method: 'POST',
+      body: JSON.stringify({ username, email, password }),
+    });
+  },
+
+  async getPortfolio(token) {
+    return fetchWithRetry(`${API_BASE}/portfolio`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+  },
+
+  async trade(token, tradeData) {
+    return fetchWithRetry(`${API_BASE}/trade`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(tradeData),
+    });
+  },
+
+  async healthCheck() {
+    try {
+      return await fetchWithRetry(`${API_BASE}/health`, {}, 1);
+    } catch (e) {
+      return { status: 'OFFLINE' };
+    }
+  }
+};
 import { 
   TrendingUp, TrendingDown, Activity, PieChart, User, 
   Search, Bell, Menu, ArrowRight, BrainCircuit, Shield, 
@@ -162,12 +224,30 @@ interface Notification {
   type: 'alert' | 'info' | 'success';
 }
 
+type LiveStockDTO = {
+  code: string;
+  name?: string;
+  price?: number | string;
+  change_pct?: number | string;
+  sector?: string;
+};
+
+const DEFAULT_STOCK_CODES = ['600519','300750','601398','688981','000002','600036','002415','601127','000858','000333'];
+const STOCK_CACHE_KEY = 'stockmind_live_cache_v1';
+const STOCK_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
+const STOCK_PAGE_SIZE = 400;
+const MAX_MARKET_STOCKS = 2000;
+const STOCK_FETCH_TIMEOUT = 20 * 1000;
+const STOCK_PAGE_DELAY = 120;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
 /**
  * --- 真实市场快照数据 (模拟爬虫抓取结果) ---
  */
 const CRAWLED_STOCKS: Stock[] = [
   { 
-    id: '1', 
+    id: '600519', 
     code: '600519', 
     name: '贵州茅台', 
     price: 1448.88, 
@@ -181,7 +261,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['五粮液 (000858)', '泸州老窖 (000568)'] 
   },
   { 
-    id: '2', 
+    id: '300750', 
     code: '300750', 
     name: '宁德时代', 
     price: 378.38, 
@@ -195,7 +275,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['比亚迪 (002594)', '亿纬锂能 (300014)'] 
   },
   { 
-    id: '3', 
+    id: '601398', 
     code: '601398', 
     name: '工商银行', 
     price: 6.24, 
@@ -209,7 +289,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['建设银行 (601939)', '农业银行 (601288)'] 
   },
   { 
-    id: '4', 
+    id: '688981', 
     code: '688981', 
     name: '中芯国际', 
     price: 121.90, 
@@ -223,7 +303,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['韦尔股份 (603501)', '北方华创 (002371)'] 
   },
   { 
-    id: '5', 
+    id: '000002', 
     code: '000002', 
     name: '万科A', 
     price: 6.17, 
@@ -237,7 +317,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['保利发展 (600048)', '招商蛇口 (001979)'] 
   },
   { 
-    id: '6', 
+    id: '600036', 
     code: '600036', 
     name: '招商银行', 
     price: 42.65, 
@@ -251,7 +331,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['平安银行 (000001)', '兴业银行 (601166)'] 
   },
   { 
-    id: '7', 
+    id: '002415', 
     code: '002415', 
     name: '海康威视', 
     price: 30.52, 
@@ -265,7 +345,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['大华股份 (002236)', '科大讯飞 (002230)'] 
   },
   { 
-    id: '8', 
+    id: '601127', 
     code: '601127', 
     name: '赛力斯', 
     price: 140.90, 
@@ -279,6 +359,138 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['长安汽车 (000625)', '江淮汽车 (600418)'] 
   },
 ];
+
+const FALLBACK_STOCK_MAP = new Map(CRAWLED_STOCKS.map(stock => [stock.code, stock]));
+
+const sentimentLabel = (score: number): 'positive' | 'neutral' | 'negative' => {
+  if (score >= 60) return 'positive';
+  if (score <= 40) return 'negative';
+  return 'neutral';
+};
+
+const toNumber = (value: number | string | undefined, fallback = 0) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
+};
+
+function normalizeLiveStock(dto: LiveStockDTO): Stock | null {
+  if (!dto || !dto.code) return null;
+  const base = FALLBACK_STOCK_MAP.get(dto.code);
+  const price = toNumber(dto.price, base?.price ?? 0);
+  const changePct = toNumber(dto.change_pct, base?.change_pct ?? 0);
+  const predicted = base?.predicted_return_7d ?? Number(((changePct / 100) / 2).toFixed(3));
+  const volatility = base?.volatility ?? Number((0.18 + Math.random() * 0.4).toFixed(2));
+  const sentimentScore = clamp(
+    base?.sentiment_score ?? Math.round(55 + changePct * 1.2 + (Math.random() * 10 - 5)),
+    5,
+    95
+  );
+
+  return {
+    id: dto.code,
+    code: dto.code,
+    name: dto.name || base?.name || dto.code,
+    price: Number(price.toFixed(2)),
+    change_pct: Number(changePct.toFixed(2)),
+    sector: dto.sector || base?.sector || 'A股',
+    predicted_return_7d: predicted,
+    profit_signal: base?.profit_signal ?? (predicted > 0.02 ? 'buy' : predicted < -0.02 ? 'sell' : 'hold'),
+    sentiment_score: sentimentScore,
+    sentiment_label: sentimentLabel(sentimentScore),
+    volatility,
+    related_stocks: base?.related_stocks || [],
+  };
+}
+
+const mapLiveStocks = (list: any[]): Stock[] => {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map(item => normalizeLiveStock({
+      code: item?.code || item?.id,
+      name: item?.name,
+      price: item?.price ?? item?.close ?? item?.latest ?? item?.current,
+      change_pct: item?.change_pct ?? item?.changePercent ?? item?.pct ?? item?.change,
+      sector: item?.sector,
+    }))
+    .filter(Boolean) as Stock[];
+};
+
+const loadStocksFromCache = (): { stocks: Stock[]; savedAt: number } | null => {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(STOCK_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.stocks) || typeof parsed.savedAt !== 'number') return null;
+    if (Date.now() - parsed.savedAt > STOCK_CACHE_TTL) {
+      window.localStorage.removeItem(STOCK_CACHE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    console.warn('[StockCache] load failed', err);
+    return null;
+  }
+};
+
+const persistStocksToCache = (stocks: Stock[]) => {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(
+      STOCK_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), stocks })
+    );
+  } catch (err) {
+    console.warn('[StockCache] persist failed', err);
+  }
+};
+
+const mergeUniqueStocks = (current: Stock[], incoming: Stock[]) => {
+  if (!incoming || !incoming.length) return current;
+  const map = new Map(current.map(stock => [stock.code, stock]));
+  for (const stock of incoming) {
+    if (!map.has(stock.code)) {
+      map.set(stock.code, stock);
+    }
+  }
+  return Array.from(map.values());
+};
+
+async function fetchAllLiveStocks() {
+  const aggregated: Stock[] = [];
+  const seenCodes = new Set<string>();
+  const start = Date.now();
+  const maxPages = Math.ceil(MAX_MARKET_STOCKS / STOCK_PAGE_SIZE);
+  for (let page = 1; page <= maxPages; page++) {
+    if (Date.now() - start > STOCK_FETCH_TIMEOUT) break;
+    let response;
+    try {
+      response = await fetchWithRetry(`${API_BASE}/stocks/list?page=${page}&pageSize=${STOCK_PAGE_SIZE}`, {}, 1);
+    } catch (err) {
+      if (page === 1) throw err;
+      break;
+    }
+    const segment = mapLiveStocks(response?.stocks);
+    if (!segment.length) {
+      if (!Array.isArray(response?.stocks) || response.stocks.length === 0) break;
+      continue;
+    }
+    for (const stock of segment) {
+      if (seenCodes.has(stock.code)) continue;
+      aggregated.push(stock);
+      seenCodes.add(stock.code);
+      if (aggregated.length >= MAX_MARKET_STOCKS) break;
+    }
+    if (aggregated.length >= MAX_MARKET_STOCKS) break;
+    if (!Array.isArray(response?.stocks) || response.stocks.length < STOCK_PAGE_SIZE) break;
+    await new Promise(resolve => setTimeout(resolve, STOCK_PAGE_DELAY));
+  }
+  return { list: aggregated, codes: seenCodes };
+}
 
 const MOCK_NOTIFICATIONS: Notification[] = [
   { id: '1', title: '股价预警', message: '宁德时代 (300750) 盘中突破 380 元关口，涨幅扩大。', time: '2分钟前', read: false, type: 'alert' },
@@ -858,16 +1070,26 @@ function StockDetailView({
 }
 
 // 1. 仪表盘视图 (Restored)
-function DashboardView({ user, setUser, recommendations, handleStockClick }: any) {
+function DashboardView({ user, setUser, recommendations, handleStockClick, isStocksLoading, lastStockSync, onRefreshStocks }: any) {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* 爬虫状态横幅 */}
       <div className="bg-blue-900/20 border border-blue-500/30 p-3 rounded-lg flex items-center justify-between text-xs text-blue-300">
         <div className="flex items-center gap-2">
           <Globe className="w-4 h-4 animate-pulse" />
-          <span>数据源: 实时互联网爬虫快照 (Tushare/AkShare Channel)</span>
+          <span>数据源: 实时行情接口 (东方财富 / Yahoo Finance)</span>
         </div>
-        <span>上次同步: 刚刚</span>
+        <div className="flex items-center gap-3">
+          <span>上次同步: {lastStockSync ? new Date(lastStockSync).toLocaleTimeString() : '等待同步'}</span>
+          <button
+            onClick={onRefreshStocks}
+            className="flex items-center gap-1 px-2 py-1 rounded border border-blue-500/50 text-blue-200 hover:text-white hover:border-blue-300 transition-colors disabled:opacity-50"
+            disabled={isStocksLoading}
+          >
+            <RefreshCw className={`w-3 h-3 ${isStocksLoading ? 'animate-spin' : ''}`} />
+            {isStocksLoading ? '同步中' : '刷新'}
+          </button>
+        </div>
       </div>
 
       {/* User Risk Profile Switcher */}
@@ -997,7 +1219,7 @@ function DashboardView({ user, setUser, recommendations, handleStockClick }: any
 }
 
 // 2. 市场全景视图 (Restored)
-function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStockClick: (s: Stock) => void }) {
+function MarketView({ stocks, handleStockClick, isLoading, error, lastUpdated, onRefresh }: { stocks: Stock[], handleStockClick: (s: Stock) => void, isLoading: boolean, error: string | null, lastUpdated: number | null, onRefresh: () => void }) {
   return (
     <div className="max-w-7xl mx-auto">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
@@ -1006,12 +1228,27 @@ function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStock
             <Activity className="w-5 h-5 text-blue-400" />
             全市场 AI 扫描
           </h2>
-          <div className="text-sm text-slate-500">
-            监控标的: {stocks.length} | 上次同步: {new Date().toLocaleTimeString()}
+          <div className="text-sm text-slate-500 flex items-center gap-3 flex-wrap">
+            <span>监控标的: {stocks.length}</span>
+            <span>上次同步: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '等待同步'}</span>
+            <button
+              onClick={onRefresh}
+              className="flex items-center gap-1 px-2 py-1 rounded border border-slate-700 text-slate-300 hover:text-white hover:border-blue-400 transition-colors disabled:opacity-50"
+              disabled={isLoading}
+            >
+              <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+              {isLoading ? '刷新中' : '刷新'}
+            </button>
           </div>
         </div>
+        {error && (
+          <div className="px-6 py-3 text-sm text-red-300 bg-red-500/10 border-b border-red-500/20 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {error}
+          </div>
+        )}
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full text-left relative">
             <thead className="bg-slate-950 text-slate-400 text-xs uppercase font-medium">
               <tr>
                 <th className="px-6 py-4">股票名称/代码</th>
@@ -1023,6 +1260,13 @@ function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStock
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
+              {stocks.length === 0 && !isLoading && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-center text-slate-500">
+                    暂无实时行情数据，请稍后重试。
+                  </td>
+                </tr>
+              )}
               {stocks.map((stock) => (
                 <tr key={stock.id} className="hover:bg-slate-800/50 transition-colors">
                   <td className="px-6 py-4">
@@ -1067,6 +1311,12 @@ function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStock
               ))}
             </tbody>
           </table>
+          {isLoading && (
+            <div className="p-4 text-center text-xs text-slate-400 bg-slate-900/80 border-t border-slate-800 flex items-center justify-center gap-2">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              正在同步最新行情...
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1074,13 +1324,13 @@ function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStock
 }
 
 // 3. 资产组合视图 (Updated to use real state)
-function PortfolioView({ accountState, handleStockClick }: { accountState: AccountState, handleStockClick: (s: Stock) => void }) {
+function PortfolioView({ accountState, marketStocks, handleStockClick }: { accountState: AccountState, marketStocks: Stock[], handleStockClick: (s: Stock) => void }) {
   
   // 计算当前持仓市值
+  const marketMap = useMemo(() => new Map(marketStocks.map(s => [s.code, s])), [marketStocks]);
+
   const portfolioItems = accountState.holdings.map(h => {
-    // 获取当前市场价 (在真实应用中应该来自实时数据，这里我们从 CRAWLED_STOCKS 查找)
-    // 如果没有找到（比如持仓了但不在今日列表），我们假设价格不变（简化处理）
-    const stock = CRAWLED_STOCKS.find(s => s.id === h.stockId);
+    const stock = marketMap.get(h.code) || marketMap.get(h.stockId) || FALLBACK_STOCK_MAP.get(h.code) || FALLBACK_STOCK_MAP.get(h.stockId);
     const currentPrice = stock ? stock.price : h.avgCost; // Fallback
     const marketValue = currentPrice * h.shares;
     const costBasis = h.avgCost * h.shares;
@@ -1447,6 +1697,10 @@ export default function AIStockTrader() {
     holdings: [],
     transactions: []
   });
+  const [stocks, setStocks] = useState<Stock[]>(CRAWLED_STOCKS);
+  const [isFetchingStocks, setIsFetchingStocks] = useState(false);
+  const [stockFetchError, setStockFetchError] = useState<string | null>(null);
+  const [lastStockSync, setLastStockSync] = useState<number | null>(null);
 
   const searchRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
@@ -1456,13 +1710,28 @@ export default function AIStockTrader() {
   useEffect(() => {
     const storedUser = localStorage.getItem('stock_ai_user');
     const storedToken = localStorage.getItem('stock_ai_token');
+    const storedAccount = localStorage.getItem('stock_ai_account');
 
     if (storedUser && storedToken) {
       try {
-        setUser(JSON.parse(storedUser));
+        const userData = JSON.parse(storedUser);
+        setUser(userData);
         setToken(storedToken);
+        
+        // 尝试恢复本地缓存的账户数据（用于离线展示）
+        if (storedAccount) {
+          try {
+            const accountData = JSON.parse(storedAccount);
+            setAccountState(accountData);
+          } catch (e) {
+            console.warn('Failed to restore cached account:', e);
+          }
+        }
+        
+        // 立即后台刷新账户数据
         fetchAccountData(storedToken);
       } catch (e) {
+        console.error('Failed to restore session:', e);
         localStorage.removeItem('stock_ai_user');
         localStorage.removeItem('stock_ai_token');
       }
@@ -1471,20 +1740,114 @@ export default function AIStockTrader() {
     setTimeout(() => setIsInitializing(false), 800);
   }, []);
 
+  useEffect(() => {
+    const cached = loadStocksFromCache();
+    if (cached && cached.stocks.length) {
+      setStocks(cached.stocks);
+      setLastStockSync(cached.savedAt);
+    }
+  }, []);
+
   const fetchAccountData = async (authToken: string) => {
     try {
       const data = await api.getPortfolio(authToken);
       if (!data.error) {
-        setAccountState({
+        const newState = {
           balance: data.balance,
           holdings: data.holdings,
           transactions: data.transactions || []
-        });
+        };
+        setAccountState(newState);
+        
+        // 保存到 localStorage 用于离线显示
+        try {
+          localStorage.setItem('stock_ai_account', JSON.stringify({
+            ...newState,
+            savedAt: Date.now(),
+          }));
+        } catch (e) {
+          console.warn('Failed to cache account:', e);
+        }
+      } else {
+        console.error('Portfolio fetch error:', data.error);
       }
     } catch (e) {
-      console.error('Failed to fetch portfolio', e);
+      console.error('Failed to fetch portfolio:', e);
+      // 数据加载失败时，使用本地缓存数据（如果有的话）
+      // accountState 已经在初始化时设置了
     }
   };
+
+  const refreshMarketData = useCallback(async () => {
+    setIsFetchingStocks(true);
+    setStockFetchError(null);
+    try {
+      let normalized: Stock[] = [];
+      let seenCodes = new Set<string>();
+
+      try {
+        const result = await fetchAllLiveStocks();
+        normalized = result.list;
+        seenCodes = result.codes;
+      } catch (err) {
+        console.warn('[Stocks] 分页拉取失败，尝试降级:', err?.message || err);
+      }
+
+      if (!normalized.length) {
+        const fallbackResp = await fetchWithRetry(
+          `${API_BASE}/stocks?codes=${DEFAULT_STOCK_CODES.join(',')}`,
+          {},
+          2
+        );
+        normalized = mapLiveStocks(fallbackResp?.stocks);
+        seenCodes = new Set(normalized.map(s => s.code));
+      }
+
+      if (normalized.length) {
+        const missingWatchList = DEFAULT_STOCK_CODES.filter(code => !seenCodes.has(code));
+        if (missingWatchList.length) {
+          try {
+            const extraResp = await fetchWithRetry(
+              `${API_BASE}/stocks?codes=${missingWatchList.join(',')}`,
+              {},
+              2
+            );
+            const extras = mapLiveStocks(extraResp?.stocks);
+            normalized = mergeUniqueStocks(normalized, extras);
+          } catch (err) {
+            console.warn('[Stocks] 重点标的补齐失败:', err?.message || err);
+          }
+        }
+      }
+
+      if (!normalized.length) {
+        normalized = [...CRAWLED_STOCKS];
+      }
+
+      normalized = normalized
+        .sort((a, b) => a.code.localeCompare(b.code, 'zh-CN'))
+        .slice(0, MAX_MARKET_STOCKS);
+
+      setStocks(normalized);
+      const now = Date.now();
+      setLastStockSync(now);
+      persistStocksToCache(normalized);
+    } catch (error) {
+      console.error('Stock fetch failed:', error);
+      setStockFetchError(error.message || '实时行情获取失败');
+      setStocks(prev => (prev.length ? prev : [...CRAWLED_STOCKS]));
+    } finally {
+      setIsFetchingStocks(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshMarketData();
+    const interval = setInterval(() => {
+      refreshMarketData();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [refreshMarketData]);
 
   // 点击外部关闭逻辑
   useEffect(() => {
@@ -1521,6 +1884,7 @@ export default function AIStockTrader() {
 
     try {
       const result = await api.trade(token, {
+        stockId: selectedStock.id,
         stockCode: selectedStock.code,
         stockName: selectedStock.name,
         type,
@@ -1529,32 +1893,54 @@ export default function AIStockTrader() {
       });
 
       if (result.error) {
-        alert(result.error);
-      } else {
-        await fetchAccountData(token);
+        alert(`❌ 交易失败: ${result.error}`);
+      } else if (result.success && result.portfolio) {
+        // 立即更新本地状态
+        setAccountState({
+          balance: result.portfolio.balance,
+          holdings: result.portfolio.holdings,
+          transactions: result.portfolio.transactions,
+        });
+        
+        // 保存到 localStorage
+        try {
+          localStorage.setItem('stock_ai_account', JSON.stringify({
+            balance: result.portfolio.balance,
+            holdings: result.portfolio.holdings,
+            transactions: result.portfolio.transactions,
+            savedAt: Date.now(),
+          }));
+        } catch (e) {
+          console.warn('Failed to cache account:', e);
+        }
+        
         const notif: Notification = {
           id: Date.now().toString(),
-          title: `交易成功`,
-          message: `${type === 'buy' ? '买入' : '卖出'} ${selectedStock.name} 成功`,
+          title: `✅ 交易成功`,
+          message: `${type === 'buy' ? '📈 买入' : '📉 卖出'} ${selectedStock.name} ${shares}股，成交价 ¥${selectedStock.price}`,
           time: '刚刚',
           read: false,
           type: 'success'
         };
         setNotifications(prev => [notif, ...prev]);
+        
+        alert(`✅ ${type === 'buy' ? '买入' : '卖出'}成功！当前余额: ¥${result.portfolio.balance.toLocaleString()}`);
       }
     } catch (e) {
-      alert('交易请求失败，请检查网络');
+      console.error('Trade error:', e);
+      alert(`❌ 交易请求失败: ${e.message || '网络错误'}`);
     }
   };
 
   // 搜索逻辑
   const filteredStocks = useMemo(() => {
     if (!searchQuery) return [];
+    const source = stocks.length ? stocks : CRAWLED_STOCKS;
     const query = searchQuery.toLowerCase();
-    return CRAWLED_STOCKS.filter(s => 
+    return source.filter(s => 
       s.code.includes(query) || s.name.toLowerCase().includes(query)
     );
-  }, [searchQuery]);
+  }, [searchQuery, stocks]);
 
   const handleSearchSelect = (stock: Stock) => {
     handleStockClick(stock);
@@ -1574,8 +1960,9 @@ export default function AIStockTrader() {
 
   // 模拟 Model B (MVECF) 逻辑
   const recommendations = useMemo(() => {
-    if (!user) return [];
-    let filtered = [...CRAWLED_STOCKS];
+    const source = stocks.length ? stocks : CRAWLED_STOCKS;
+    if (!user) return source.slice(0, 4);
+    let filtered = [...source];
     filtered = filtered.filter(s => s.profit_signal !== 'sell');
     if (user.riskProfile === 'low') {
       filtered = filtered.filter(s => s.volatility < 0.20);
@@ -1587,7 +1974,7 @@ export default function AIStockTrader() {
       filtered.sort((a, b) => b.predicted_return_7d - a.predicted_return_7d);
     }
     return filtered.slice(0, 4);
-  }, [user]);
+  }, [user, stocks]);
 
   const handleStockClick = (stock: Stock) => {
     setIsLoading(true);
@@ -1815,19 +2202,27 @@ export default function AIStockTrader() {
                   setUser={setUser} 
                   recommendations={recommendations} 
                   handleStockClick={handleStockClick} 
+                  isStocksLoading={isFetchingStocks}
+                  lastStockSync={lastStockSync}
+                  onRefreshStocks={refreshMarketData}
                 />
               )}
               
               {activeTab === 'market' && (
                 <MarketView 
-                  stocks={CRAWLED_STOCKS} 
+                  stocks={stocks} 
                   handleStockClick={handleStockClick} 
+                  isLoading={isFetchingStocks}
+                  error={stockFetchError}
+                  lastUpdated={lastStockSync}
+                  onRefresh={refreshMarketData}
                 />
               )}
 
               {activeTab === 'portfolio' && (
                 <PortfolioView 
                   accountState={accountState}
+                  marketStocks={stocks.length ? stocks : CRAWLED_STOCKS}
                   handleStockClick={handleStockClick} 
                 />
               )}

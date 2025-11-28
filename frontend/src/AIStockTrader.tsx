@@ -1,55 +1,125 @@
-// --- API Helper ---
-const API_URL = 'http://localhost:5000/api'; // 你的本地后端地址
+const getAPIURL = () => {
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  return 'http://localhost:5000/api';
+};
+
+const API_URL = getAPIURL();
 
 const api = {
-  async login(email, password) {
-    const res = await fetch(`${API_URL}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    return res.json();
+  async login(email: string, password: string) {
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      return data;
+    } catch (err: unknown) {
+      console.error('登录错误详情:', err);
+      const msg = err instanceof Error ? err.message : '登录请求失败，请检查网络连接';
+      throw new Error(msg);
+    }
   },
   
-  async register(username, email, password) {
-    const res = await fetch(`${API_URL}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password })
-    });
-    return res.json();
+  async register(username: string, email: string, password: string) {
+    try {
+      const res = await fetch(`${API_URL}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      return data;
+    } catch (err: unknown) {
+      console.error('注册错误详情:', err);
+      const msg = err instanceof Error ? err.message : '注册请求失败，请检查网络连接';
+      throw new Error(msg);
+    }
   },
 
-  async getPortfolio(token) {
-    const res = await fetch(`${API_URL}/portfolio`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    return res.json();
+  async getPortfolio(token: string) {
+    try {
+      const res = await fetch(`${API_URL}/portfolio`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      return data;
+    } catch (err: unknown) {
+      console.error('获取投资组合失败:', err);
+      const msg = err instanceof Error ? err.message : '获取投资组合失败，请检查网络连接';
+      return { error: msg };
+    }
   },
 
-  async trade(token, tradeData) {
-    const res = await fetch(`${API_URL}/trade`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(tradeData)
-    });
-    return res.json();
+  async trade(token: string, tradeData: Record<string, unknown>) {
+    try {
+      const res = await fetch(`${API_URL}/trade`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(tradeData)
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      return data;
+    } catch (err: unknown) {
+      console.error('交易错误详情:', err);
+      const msg = err instanceof Error ? err.message : '交易请求失败，请检查网络连接';
+      throw new Error(msg);
+    }
   }
 };
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  AreaChart, Area, ReferenceLine, BarChart, Bar
+  AreaChart, Area
 } from 'recharts';
 import { 
-  TrendingUp, TrendingDown, Activity, PieChart, User, 
-  Search, Bell, Menu, ArrowRight, BrainCircuit, Shield, 
+  TrendingUp, Activity, PieChart, User, 
+  Search, Bell, ArrowRight, BrainCircuit, Shield, 
   FileText, Layers, RefreshCw, ChevronDown, LogOut, Lock, Mail, Eye, EyeOff,
-  Wallet, ArrowUpRight, ArrowDownRight, Briefcase, Globe, X, Check, Info, AlertTriangle, ChevronUp, Sparkles, MessageSquare, DollarSign, Plus, Minus, History
+  Wallet, ArrowUpRight, ArrowDownRight, Briefcase, Globe, ChevronUp, Sparkles, MessageSquare, Plus, Minus
 } from 'lucide-react';
 
 /**
@@ -153,6 +223,21 @@ interface Stock {
   related_stocks: string[];
 }
 
+interface ChartPoint {
+  date: string;
+  price: number;
+  volume: number;
+  ma5: number;
+  sentiment: number;
+}
+
+interface DashboardProps {
+  user: UserProfile;
+  setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
+  recommendations: Stock[];
+  handleStockClick: (s: Stock) => void;
+}
+
 interface Notification {
   id: string;
   title: string;
@@ -162,12 +247,100 @@ interface Notification {
   type: 'alert' | 'info' | 'success';
 }
 
+type RawUserProfile = Partial<UserProfile> & { username?: string; email?: string; riskProfile?: string };
+
+type LiveStockDTO = {
+  code: string;
+  name?: string;
+  price?: number | string;
+  change_pct?: number | string;
+};
+
+const STOCK_CACHE_KEY = 'stock_ai_cached_list';
+const STOCK_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
+const AVATAR_GRADIENTS = [
+  'from-blue-500 via-indigo-500 to-purple-500',
+  'from-emerald-500 via-green-500 to-teal-500',
+  'from-amber-500 via-orange-500 to-rose-500',
+  'from-cyan-500 via-blue-500 to-indigo-500',
+  'from-pink-500 via-rose-500 to-purple-500',
+];
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+function pickAvatarColor(seed: string) {
+  if (!seed) seed = `${Date.now()}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const index = Math.abs(hash) % AVATAR_GRADIENTS.length;
+  return AVATAR_GRADIENTS[index];
+}
+
+function sentimentLabel(score: number): 'positive' | 'neutral' | 'negative' {
+  if (score >= 60) return 'positive';
+  if (score <= 40) return 'negative';
+  return 'neutral';
+}
+
+function loadStocksFromLocalCache(): Stock[] | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(STOCK_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof parsed.savedAt !== 'number' ||
+      !Array.isArray(parsed.stocks)
+    ) {
+      return null;
+    }
+    if (Date.now() - parsed.savedAt > STOCK_CACHE_TTL) {
+      window.localStorage.removeItem(STOCK_CACHE_KEY);
+      return null;
+    }
+    return parsed.stocks as Stock[];
+  } catch (err) {
+    console.warn('[StockCache] 加载失败:', err);
+    return null;
+  }
+}
+
+function persistStocksToLocalCache(list: Stock[]) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(
+      STOCK_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), stocks: list })
+    );
+  } catch (err) {
+    console.warn('[StockCache] 保存失败:', err);
+  }
+}
+
+function normalizeUserProfile(raw: RawUserProfile | null | undefined): UserProfile {
+  const username = raw?.username || 'AI Trader';
+  const email = raw?.email || '';
+  const rawRisk = raw?.riskProfile;
+  const risk: RiskLevel = rawRisk === 'low' || rawRisk === 'high' || rawRisk === 'medium' ? rawRisk : 'medium';
+  return {
+    username,
+    email,
+    riskProfile: risk,
+    avatarColor: raw?.avatarColor || pickAvatarColor(email || username),
+  };
+}
+
 /**
  * --- 真实市场快照数据 (模拟爬虫抓取结果) ---
  */
 const CRAWLED_STOCKS: Stock[] = [
   { 
-    id: '1', 
+    id: '600519', 
     code: '600519', 
     name: '贵州茅台', 
     price: 1448.88, 
@@ -181,7 +354,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['五粮液 (000858)', '泸州老窖 (000568)'] 
   },
   { 
-    id: '2', 
+    id: '300750', 
     code: '300750', 
     name: '宁德时代', 
     price: 378.38, 
@@ -195,7 +368,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['比亚迪 (002594)', '亿纬锂能 (300014)'] 
   },
   { 
-    id: '3', 
+    id: '601398', 
     code: '601398', 
     name: '工商银行', 
     price: 6.24, 
@@ -209,7 +382,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['建设银行 (601939)', '农业银行 (601288)'] 
   },
   { 
-    id: '4', 
+    id: '688981', 
     code: '688981', 
     name: '中芯国际', 
     price: 121.90, 
@@ -223,7 +396,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['韦尔股份 (603501)', '北方华创 (002371)'] 
   },
   { 
-    id: '5', 
+    id: '000002', 
     code: '000002', 
     name: '万科A', 
     price: 6.17, 
@@ -237,7 +410,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['保利发展 (600048)', '招商蛇口 (001979)'] 
   },
   { 
-    id: '6', 
+    id: '600036', 
     code: '600036', 
     name: '招商银行', 
     price: 42.65, 
@@ -251,7 +424,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['平安银行 (000001)', '兴业银行 (601166)'] 
   },
   { 
-    id: '7', 
+    id: '002415', 
     code: '002415', 
     name: '海康威视', 
     price: 30.52, 
@@ -265,7 +438,7 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['大华股份 (002236)', '科大讯飞 (002230)'] 
   },
   { 
-    id: '8', 
+    id: '601127', 
     code: '601127', 
     name: '赛力斯', 
     price: 140.90, 
@@ -279,6 +452,39 @@ const CRAWLED_STOCKS: Stock[] = [
     related_stocks: ['长安汽车 (000625)', '江淮汽车 (600418)'] 
   },
 ];
+
+const FALLBACK_STOCK_MAP = new Map(CRAWLED_STOCKS.map(stock => [stock.code, stock]));
+
+function normalizeLiveStock(dto: LiveStockDTO): Stock {
+  const base = FALLBACK_STOCK_MAP.get(dto.code);
+  const price = typeof dto.price === 'number' ? dto.price : Number(dto.price);
+  const changePctRaw = typeof dto.change_pct === 'number' ? dto.change_pct : Number(dto.change_pct);
+  const resolvedPrice = Number.isFinite(price) ? Number(price.toFixed(2)) : (base?.price ?? 0);
+  const resolvedChangePct = Number.isFinite(changePctRaw) ? Number(changePctRaw.toFixed(2)) : (base?.change_pct ?? 0);
+  const volatility = base?.volatility ?? Number((0.15 + Math.random() * 0.4).toFixed(2));
+  const predictedReturn = base?.predicted_return_7d ?? Number(((resolvedChangePct / 100) / 2).toFixed(3));
+  const profitSignal = base?.profit_signal ?? (predictedReturn > 0.02 ? 'buy' : predictedReturn < -0.02 ? 'sell' : 'hold');
+  const sentimentScore = clamp(
+    base?.sentiment_score ?? Math.round(55 + resolvedChangePct * 1.5 + (Math.random() * 12 - 6)),
+    5,
+    95
+  );
+
+  return {
+    id: dto.code,
+    code: dto.code,
+    name: dto.name || base?.name || dto.code,
+    price: resolvedPrice,
+    change_pct: resolvedChangePct,
+    sector: base?.sector || 'A股',
+    predicted_return_7d: predictedReturn,
+    profit_signal: profitSignal,
+    sentiment_score: sentimentScore,
+    sentiment_label: sentimentLabel(sentimentScore),
+    volatility,
+    related_stocks: base?.related_stocks || [],
+  };
+}
 
 const MOCK_NOTIFICATIONS: Notification[] = [
   { id: '1', title: '股价预警', message: '宁德时代 (300750) 盘中突破 380 元关口，涨幅扩大。', time: '2分钟前', read: false, type: 'alert' },
@@ -294,7 +500,7 @@ const CRAWLED_NEWS = [
   { title: "赛力斯问界新车型交付量破万，智能驾驶获市场高度认可", time: "3小时前", impact: "positive" },
 ];
 
-const generateChartData = (basePrice: number, volatility: number, range: TimeRange = '1D') => {
+const generateChartData = (basePrice: number, volatility: number, range: TimeRange = '1D'): ChartPoint[] => {
   const data = [];
   let currentPrice = basePrice;
   let count = 30;
@@ -450,7 +656,7 @@ function NavButton({ active, onClick, icon, label }: { active: boolean, onClick:
       }`}
     >
       <div className={`${active ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
-        {React.cloneElement(icon as React.ReactElement, { size: 20 })}
+        {React.cloneElement(icon as React.ReactElement<{ size?: number }>, { size: 20 })}
       </div>
       <span className="hidden lg:block font-medium text-sm">{label}</span>
     </button>
@@ -625,7 +831,7 @@ function StockDetailView({
   onTrade 
 }: { 
   stock: Stock, 
-  data: any[], 
+  data: ChartPoint[], 
   isLoading: boolean, 
   onBack: () => void,
   accountState: AccountState,
@@ -634,7 +840,7 @@ function StockDetailView({
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>('1D');
-  const [chartData, setChartData] = useState<any[]>(initialData);
+  const [chartData, setChartData] = useState<ChartPoint[]>(initialData);
   const [isChartLoading, setIsChartLoading] = useState(false);
 
   // 找到当前股票的持仓信息
@@ -678,10 +884,10 @@ function StockDetailView({
       2. **AI信号解析**：解释为什么预测模型给出了 ${stock.predicted_return_7d > 0 ? '正向' : '负向'} 预期（结合情感分）。
       3. **操作建议**：给用户的最终建议。
       语气要专业、客观，字数控制在 200 字左右。使用 Markdown 格式。`;
-    try {
-      const result = await callGeminiAPI(prompt);
-      setAiAnalysis(result);
-    } catch (e) {
+  try {
+    const result = await callGeminiAPI(prompt);
+    setAiAnalysis(result);
+    } catch {
       setAiAnalysis("抱歉，智能分析服务暂时不可用，请稍后重试。");
     } finally {
       setIsGenerating(false);
@@ -691,7 +897,7 @@ function StockDetailView({
   const isLoading = initialLoading || isChartLoading;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 pb-10">
+    <div className="space-y-6 w-full animate-in fade-in slide-in-from-bottom-4 duration-500 pb-10">
       <button onClick={onBack} className="flex items-center text-slate-400 hover:text-white transition-colors mb-2">
         <ArrowRight className="w-4 h-4 rotate-180 mr-2" />
         返回列表
@@ -858,9 +1064,9 @@ function StockDetailView({
 }
 
 // 1. 仪表盘视图 (Restored)
-function DashboardView({ user, setUser, recommendations, handleStockClick }: any) {
+function DashboardView({ user, setUser, recommendations, handleStockClick }: DashboardProps) {
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* 爬虫状态横幅 */}
       <div className="bg-blue-900/20 border border-blue-500/30 p-3 rounded-lg flex items-center justify-between text-xs text-blue-300">
         <div className="flex items-center gap-2">
@@ -999,7 +1205,7 @@ function DashboardView({ user, setUser, recommendations, handleStockClick }: any
 // 2. 市场全景视图 (Restored)
 function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStockClick: (s: Stock) => void }) {
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
         <div className="p-6 border-b border-slate-800 flex justify-between items-center">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -1074,13 +1280,11 @@ function MarketView({ stocks, handleStockClick }: { stocks: Stock[], handleStock
 }
 
 // 3. 资产组合视图 (Updated to use real state)
-function PortfolioView({ accountState, handleStockClick }: { accountState: AccountState, handleStockClick: (s: Stock) => void }) {
+function PortfolioView({ accountState, stocks, handleStockClick }: { accountState: AccountState, stocks: Stock[], handleStockClick: (s: Stock) => void }) {
   
   // 计算当前持仓市值
   const portfolioItems = accountState.holdings.map(h => {
-    // 获取当前市场价 (在真实应用中应该来自实时数据，这里我们从 CRAWLED_STOCKS 查找)
-    // 如果没有找到（比如持仓了但不在今日列表），我们假设价格不变（简化处理）
-    const stock = CRAWLED_STOCKS.find(s => s.id === h.stockId);
+    const stock = stocks.find(s => s.id === h.stockId) || CRAWLED_STOCKS.find(s => s.id === h.stockId);
     const currentPrice = stock ? stock.price : h.avgCost; // Fallback
     const marketValue = currentPrice * h.shares;
     const costBasis = h.avgCost * h.shares;
@@ -1097,7 +1301,7 @@ function PortfolioView({ accountState, handleStockClick }: { accountState: Accou
   const totalPLPct = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* Portfolio Summary Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-gradient-to-br from-blue-900 to-slate-900 p-6 rounded-2xl border border-blue-800/30">
@@ -1208,7 +1412,7 @@ function PortfolioView({ accountState, handleStockClick }: { accountState: Accou
 /**
  * --- 登录页面组件 ---
  */
-function LoginScreen({ onLogin }: { onLogin: (user: UserProfile, token: string) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (user: RawUserProfile, token: string) => void }) {
   const [isRegister, setIsRegister] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -1225,19 +1429,40 @@ function LoginScreen({ onLogin }: { onLogin: (user: UserProfile, token: string) 
     setLoading(true);
 
     try {
+      // 输入验证
+      if (!email || !password) {
+        throw new Error('请输入邮箱和密码');
+      }
+      
+      if (email.length < 3 || !email.includes('@')) {
+        throw new Error('请输入有效的邮箱地址');
+      }
+      
+      if (password.length < 6) {
+        throw new Error('密码长度至少为 6 位');
+      }
+
       if (isRegister) {
-        const res = await api.register(username, email, password);
-        if (res.error) throw new Error(res.error);
+        if (!username) {
+          throw new Error('请输入用户名');
+        }
+        if (username.length < 2) {
+          throw new Error('用户名长度至少为 2 位');
+        }
+        
+        // 执行注册
+        await api.register(username, email, password);
+        // 注册成功后自动登录
         const loginRes = await api.login(email, password);
-        if (loginRes.error) throw new Error(loginRes.error);
         onLogin(loginRes.user, loginRes.token);
       } else {
+        // 执行登录
         const res = await api.login(email, password);
-        if (res.error) throw new Error(res.error);
         onLogin(res.user, res.token);
       }
-    } catch (err: any) {
-      setError(err.message || '请求失败');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '请求失败，请重试';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -1247,7 +1472,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: UserProfile, token: string) 
     <div className="flex h-screen w-full bg-slate-950 text-slate-100 font-sans overflow-hidden">
       {/* 左侧品牌区域 */}
       <div className="hidden lg:flex w-1/2 bg-slate-900 border-r border-slate-800 flex-col justify-between p-12 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1611974765270-ca1258634369?q=80&w=2664&auto=format&fit=crop')] opacity-10 bg-cover bg-center mix-blend-overlay"></div>
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900/30 via-slate-900 to-slate-950 opacity-70 pointer-events-none"></div>
         <div className="absolute inset-0 bg-gradient-to-br from-blue-900/20 to-slate-950/90 pointer-events-none"></div>
         
         <div className="relative z-10">
@@ -1432,7 +1657,8 @@ export default function AIStockTrader() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'market' | 'portfolio'>('dashboard');
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<ChartPoint[]>([]);
+  const [stocks, setStocks] = useState<Stock[]>(() => [...CRAWLED_STOCKS]);
 
   // 搜索和通知状态
   const [searchQuery, setSearchQuery] = useState('');
@@ -1452,39 +1678,129 @@ export default function AIStockTrader() {
   const notificationRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null); 
 
-  // 初始化与持久化
-  useEffect(() => {
-    const storedUser = localStorage.getItem('stock_ai_user');
-    const storedToken = localStorage.getItem('stock_ai_token');
-
-    if (storedUser && storedToken) {
-      try {
-        setUser(JSON.parse(storedUser));
-        setToken(storedToken);
-        fetchAccountData(storedToken);
-      } catch (e) {
-        localStorage.removeItem('stock_ai_user');
-        localStorage.removeItem('stock_ai_token');
-      }
-    }
-
-    setTimeout(() => setIsInitializing(false), 800);
-  }, []);
-
   const fetchAccountData = async (authToken: string) => {
     try {
       const data = await api.getPortfolio(authToken);
-      if (!data.error) {
+      if (data && !data.error) {
         setAccountState({
-          balance: data.balance,
-          holdings: data.holdings,
+          balance: data.balance || 1000000,
+          holdings: data.holdings || [],
           transactions: data.transactions || []
         });
+      } else if (data.error) {
+        console.warn('获取账户数据失败:', data.error);
       }
     } catch (e) {
       console.error('Failed to fetch portfolio', e);
     }
   };
+
+  // 初始化与持久化
+  useEffect(() => {
+    const initializeApp = async () => {
+      const storedUser = localStorage.getItem('stock_ai_user');
+      const storedToken = localStorage.getItem('stock_ai_token');
+
+      if (storedUser && storedToken) {
+        try {
+          const userData: RawUserProfile = JSON.parse(storedUser);
+          const normalized = normalizeUserProfile(userData);
+          setUser(normalized);
+          setToken(storedToken);
+          if (!userData.avatarColor) {
+            localStorage.setItem('stock_ai_user', JSON.stringify(normalized));
+          }
+          // 异步获取账户数据，不阻塞初始化
+          await fetchAccountData(storedToken);
+        } catch (e) {
+          console.error('初始化失败:', e);
+          localStorage.removeItem('stock_ai_user');
+          localStorage.removeItem('stock_ai_token');
+        }
+      }
+
+      setIsInitializing(false);
+    };
+
+    initializeApp();
+  }, []);
+
+  useEffect(() => {
+    const cached = loadStocksFromLocalCache();
+    if (cached && cached.length) {
+      setStocks(cached);
+    }
+  }, []);
+
+  // 实时行情拉取并合并到本地数据
+  useEffect(() => {
+    let cancelled = false;
+    const fallbackCodes = ['600519','300750','601398','688981','000002','600036','002415','601127'].join(',');
+
+    const hydrateFromCacheOrSeed = () => {
+      const cached = loadStocksFromLocalCache();
+      if (cached && cached.length) {
+        setStocks(cached);
+      } else {
+        setStocks([...CRAWLED_STOCKS]);
+      }
+    };
+
+    type LiveStockItem = { code?: string; id?: string; name?: string; price?: number; change_pct?: number };
+    const fetchStocksFromApi = async (targetUrl: string): Promise<Stock[] | null> => {
+      try {
+        const res = await fetch(targetUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawList = Array.isArray(data?.stocks) ? data.stocks : [];
+        if (!rawList.length) return null;
+        const normalized = rawList
+          .map((item: LiveStockItem) => {
+            const code = item.code || item.id;
+            if (!code) return null;
+            return normalizeLiveStock({
+              code,
+              name: item.name,
+              price: item.price,
+              change_pct: item.change_pct
+            });
+          })
+          .filter(Boolean) as Stock[];
+        return normalized.length ? normalized : null;
+      } catch (error) {
+        console.warn('[StockFetch] 请求失败:', targetUrl, error);
+        return null;
+      }
+    };
+
+    const run = async () => {
+      const primaryUrl = `${API_URL}/stocks/list?page=1&pageSize=1000`;
+      const primary = await fetchStocksFromApi(primaryUrl);
+      if (cancelled) return;
+      if (primary && primary.length) {
+        setStocks(primary);
+        persistStocksToLocalCache(primary);
+        return;
+      }
+
+      const fallbackUrl = `${API_URL}/stocks?codes=${fallbackCodes}`;
+      const fallbackData = await fetchStocksFromApi(fallbackUrl);
+      if (cancelled) return;
+      if (fallbackData && fallbackData.length) {
+        setStocks(fallbackData);
+        persistStocksToLocalCache(fallbackData);
+        return;
+      }
+
+      hydrateFromCacheOrSeed();
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 点击外部关闭逻辑
   useEffect(() => {
@@ -1497,10 +1813,11 @@ export default function AIStockTrader() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleLogin = (userData: UserProfile, authToken: string) => {
-    setUser(userData);
+  const handleLogin = (userData: RawUserProfile, authToken: string) => {
+    const normalized = normalizeUserProfile(userData);
+    setUser(normalized);
     setToken(authToken);
-    localStorage.setItem('stock_ai_user', JSON.stringify(userData));
+    localStorage.setItem('stock_ai_user', JSON.stringify(normalized));
     localStorage.setItem('stock_ai_token', authToken);
     fetchAccountData(authToken);
   };
@@ -1517,10 +1834,19 @@ export default function AIStockTrader() {
 
   // 核心交易逻辑 - NEW
   const executeTrade = async (type: 'buy' | 'sell', shares: number) => {
-    if (!selectedStock || !token) return;
+    console.log('[executeTrade] invoked', { type, shares, selectedStock, token });
+    if (!selectedStock) {
+      alert('未选择任何股票，无法下单');
+      return;
+    }
+    if (!token) {
+      alert('未登录或登录已过期，请先登录');
+      return;
+    }
 
     try {
       const result = await api.trade(token, {
+        stockId: selectedStock.id,
         stockCode: selectedStock.code,
         stockName: selectedStock.name,
         type,
@@ -1531,7 +1857,65 @@ export default function AIStockTrader() {
       if (result.error) {
         alert(result.error);
       } else {
-        await fetchAccountData(token);
+        if (result.portfolio) {
+          setAccountState({
+            balance: result.portfolio.balance || accountState.balance,
+            holdings: result.portfolio.holdings || accountState.holdings,
+            transactions: result.portfolio.transactions || accountState.transactions
+          });
+        } else {
+          const totalAmount = Number((selectedStock.price * shares).toFixed(2));
+          setAccountState(prev => {
+            const nextBalance = type === 'buy'
+              ? Number((prev.balance - totalAmount).toFixed(2))
+              : Number((prev.balance + totalAmount).toFixed(2));
+
+            const nextHoldings = [...prev.holdings];
+            const idx = nextHoldings.findIndex(h => h.code === selectedStock.code);
+            if (type === 'buy') {
+              if (idx >= 0) {
+                const h = nextHoldings[idx];
+                const newShares = h.shares + shares;
+                const newCost = ((h.avgCost * h.shares) + totalAmount) / newShares;
+                nextHoldings[idx] = { ...h, shares: newShares, avgCost: Number(newCost.toFixed(2)) };
+              } else {
+                nextHoldings.push({
+                  stockId: selectedStock.id,
+                  code: selectedStock.code,
+                  name: selectedStock.name,
+                  shares,
+                  avgCost: selectedStock.price
+                });
+              }
+            } else {
+              if (idx >= 0) {
+                const h = nextHoldings[idx];
+                const remaining = h.shares - shares;
+                if (remaining > 0) {
+                  nextHoldings[idx] = { ...h, shares: remaining };
+                } else {
+                  nextHoldings.splice(idx, 1);
+                }
+              }
+            }
+            const tx = {
+              id: Date.now().toString(),
+              stockId: selectedStock.id,
+              code: selectedStock.code,
+              name: selectedStock.name,
+              type,
+              price: selectedStock.price,
+              shares,
+              totalAmount,
+              timestamp: new Date().toISOString()
+            };
+            return {
+              balance: nextBalance,
+              holdings: nextHoldings,
+              transactions: [tx, ...prev.transactions]
+            };
+          });
+        }
         const notif: Notification = {
           id: Date.now().toString(),
           title: `交易成功`,
@@ -1542,8 +1926,9 @@ export default function AIStockTrader() {
         };
         setNotifications(prev => [notif, ...prev]);
       }
-    } catch (e) {
-      alert('交易请求失败，请检查网络');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '交易请求失败，请检查网络';
+      alert(msg);
     }
   };
 
@@ -1551,10 +1936,10 @@ export default function AIStockTrader() {
   const filteredStocks = useMemo(() => {
     if (!searchQuery) return [];
     const query = searchQuery.toLowerCase();
-    return CRAWLED_STOCKS.filter(s => 
+    return stocks.filter(s => 
       s.code.includes(query) || s.name.toLowerCase().includes(query)
     );
-  }, [searchQuery]);
+  }, [searchQuery, stocks]);
 
   const handleSearchSelect = (stock: Stock) => {
     handleStockClick(stock);
@@ -1575,7 +1960,7 @@ export default function AIStockTrader() {
   // 模拟 Model B (MVECF) 逻辑
   const recommendations = useMemo(() => {
     if (!user) return [];
-    let filtered = [...CRAWLED_STOCKS];
+    let filtered = [...stocks];
     filtered = filtered.filter(s => s.profit_signal !== 'sell');
     if (user.riskProfile === 'low') {
       filtered = filtered.filter(s => s.volatility < 0.20);
@@ -1587,7 +1972,7 @@ export default function AIStockTrader() {
       filtered.sort((a, b) => b.predicted_return_7d - a.predicted_return_7d);
     }
     return filtered.slice(0, 4);
-  }, [user]);
+  }, [user, stocks]);
 
   const handleStockClick = (stock: Stock) => {
     setIsLoading(true);
@@ -1811,7 +2196,7 @@ export default function AIStockTrader() {
                   
                   {activeTab === 'market' && (
                     <MarketView 
-                      stocks={CRAWLED_STOCKS} 
+                      stocks={stocks} 
                       handleStockClick={handleStockClick} 
                     />
                   )}
@@ -1819,6 +2204,7 @@ export default function AIStockTrader() {
                   {activeTab === 'portfolio' && (
                     <PortfolioView 
                       accountState={accountState}
+                      stocks={stocks}
                       handleStockClick={handleStockClick} 
                     />
                   )}

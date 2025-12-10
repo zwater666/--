@@ -123,46 +123,47 @@ import {
 } from 'lucide-react';
 
 /**
- * --- Gemini API 配置 ---
+ * --- AI 分析配置 ---
+ * DeepSeek API 现在通过后端代理调用，API Key 不会暴露在浏览器中
  */
-const apiKey = ""; // 运行环境会自动注入 API Key
 
 /**
- * 调用 Gemini API 的辅助函数 (包含指数退避重试机制)
+ * 调用后端 AI 分析接口的辅助函数
  */
-async function callGeminiAPI(prompt: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-  const payload = {
-    contents: [{ parts: [{ text: prompt }] }]
-  };
-
-  let attempt = 0;
-  const delays = [1000, 2000, 4000, 8000, 16000];
-
-  while (attempt < 5) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || "AI 暂时无法生成分析结果，请稍后再试。";
-    } catch (error) {
-      attempt++;
-      if (attempt >= 5) {
-        console.error("Gemini API call failed after retries:", error);
-        return "网络连接繁忙，AI 分析暂时不可用。";
-      }
-      await new Promise(resolve => setTimeout(resolve, delays[attempt - 1]));
+async function callAIAnalysis(prompt: string): Promise<string> {
+  try {
+    // 修复：使用正确的 token 键名
+    const token = localStorage.getItem('stock_ai_token');
+    
+    if (!token) {
+      return "⚠️ 请先登录后再使用 AI 分析功能。";
     }
+
+    const response = await fetch(`${API_URL}/ai-analysis`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ prompt })
+    });
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return "⚠️ 登录已过期，请重新登录后使用 AI 分析功能。";
+      }
+      
+      const errorData = await response.json().catch(() => ({}));
+      console.error('AI 分析接口错误:', errorData);
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.analysis || "AI 暂时无法生成分析结果，请稍后再试。";
+  } catch (error) {
+    console.error("AI 分析调用失败:", error);
+    return "❌ 网络连接繁忙或服务暂时不可用，请稍后重试。";
   }
-  return "请求超时。";
 }
 
 /**
@@ -885,7 +886,7 @@ function StockDetailView({
       3. **操作建议**：给用户的最终建议。
       语气要专业、客观，字数控制在 200 字左右。使用 Markdown 格式。`;
   try {
-    const result = await callGeminiAPI(prompt);
+    const result = await callAIAnalysis(prompt);
     setAiAnalysis(result);
     } catch {
       setAiAnalysis("抱歉，智能分析服务暂时不可用，请稍后重试。");
@@ -999,7 +1000,7 @@ function StockDetailView({
              onTrade={onTrade} 
            />
 
-           {/* Gemini AI Analyst Card */}
+           {/* DeepSeek AI Analyst Card */}
            <div className="bg-gradient-to-br from-indigo-900/40 to-slate-900 border border-indigo-500/30 rounded-2xl p-6 relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-10">
                <Sparkles className="w-24 h-24 text-indigo-400" />
@@ -1007,7 +1008,7 @@ function StockDetailView({
              
              <h3 className="text-sm font-semibold text-indigo-300 uppercase tracking-wider mb-4 flex items-center gap-2">
                <Sparkles className="w-4 h-4" />
-               Gemini 智能投顾
+               DeepSeek 智能投顾
              </h3>
 
              {!aiAnalysis && !isGenerating && (
@@ -1026,7 +1027,7 @@ function StockDetailView({
              {isGenerating && (
                <div className="py-8 flex flex-col items-center justify-center text-indigo-300">
                  <RefreshCw className="w-8 h-8 animate-spin mb-3" />
-                 <span className="text-xs animate-pulse">Gemini 正在分析 {stock.name} 的基本面与技术面...</span>
+                 <span className="text-xs animate-pulse">DeepSeek 正在分析 {stock.name} 的基本面与技术面...</span>
                </div>
              )}
 

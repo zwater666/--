@@ -793,6 +793,88 @@ app.post('/api/trade', authenticateToken, async (req, res) => {
     }
 });
 
+// ============================================
+// DeepSeek AI 分析接口（后端代理）
+// ============================================
+app.post('/api/ai-analysis', authenticateToken, async (req, res) => {
+    try {
+        const { prompt } = req.body;
+        
+        if (!prompt) {
+            return res.status(400).json({ error: '缺少分析提示词' });
+        }
+
+        const apiKey = process.env.DEEPSEEK_API_KEY || process.env.REACT_APP_DEEPSEEK_API_KEY;
+        
+        if (!apiKey) {
+            console.error('❌ DeepSeek API Key 未配置');
+            return res.status(500).json({ error: 'AI 服务未配置' });
+        }
+
+        console.log(`[AI Analysis] 用户 ${req.user.userId} 请求 AI 分析`);
+
+        // 调用 DeepSeek API（带重试机制）
+        const delays = [1000, 2000, 4000, 8000, 16000];
+        let attempt = 0;
+        
+        while (attempt < 5) {
+            try {
+                const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: 'deepseek-chat',
+                        messages: [
+                            {
+                                role: 'system',
+                                content: '你是一位专业的股票分析师，擅长结合基本面和技术面分析给出客观、专业的投资建议。'
+                            },
+                            {
+                                role: 'user',
+                                content: prompt
+                            }
+                        ],
+                        temperature: 0.7,
+                        max_tokens: 1000
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(`DeepSeek API error: ${response.status} - ${JSON.stringify(errorData)}`);
+                }
+
+                const data = await response.json();
+                const result = data.choices?.[0]?.message?.content || 'AI 暂时无法生成分析结果，请稍后再试。';
+                
+                console.log(`[AI Analysis] 分析成功，返回 ${result.length} 字符`);
+                return res.json({ success: true, analysis: result });
+
+            } catch (error) {
+                attempt++;
+                console.error(`[AI Analysis] 第 ${attempt} 次尝试失败:`, error.message);
+                
+                if (attempt >= 5) {
+                    return res.status(500).json({ 
+                        error: '网络连接繁忙，AI 分析暂时不可用。',
+                        details: error.message 
+                    });
+                }
+                
+                // 指数退避等待
+                await new Promise(resolve => setTimeout(resolve, delays[attempt - 1]));
+            }
+        }
+
+    } catch (error) {
+        console.error('[AI Analysis] 错误:', error);
+        res.status(500).json({ error: 'AI 分析服务异常' });
+    }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`\n✅ Server running on port ${PORT}`);
@@ -801,7 +883,8 @@ app.listen(PORT, () => {
     console.log(`   - 登录: POST http://localhost:${PORT}/api/login`);
     console.log(`   - 注册: POST http://localhost:${PORT}/api/register`);
     console.log(`   - 获取投资组合: GET http://localhost:${PORT}/api/portfolio`);
-    console.log(`   - 交易: POST http://localhost:${PORT}/api/trade\n`);
+    console.log(`   - 交易: POST http://localhost:${PORT}/api/trade`);
+    console.log(`   - AI 分析: POST http://localhost:${PORT}/api/ai-analysis`);
     console.log(`   - 实时行情: GET http://localhost:${PORT}/api/stocks?codes=600519,300750`);
     console.log(`   - 全市场列表: GET http://localhost:${PORT}/api/stocks/list?page=1&pageSize=1000\n`);
 });

@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const app = express();
 app.use(cors());
@@ -175,11 +176,66 @@ function toYahooSymbol(code) {
     return `${code}.SZ`;
 }
 
+function getPythonCommand() {
+    const venvPython = path.join(__dirname, '.venv', 'Scripts', 'python.exe'); // Windows
+    if (fs.existsSync(venvPython)) {
+        return venvPython;
+    }
+    const venvPythonUnix = path.join(__dirname, '.venv', 'bin', 'python'); // Linux/Mac
+    if (fs.existsSync(venvPythonUnix)) {
+        return venvPythonUnix;
+    }
+    return 'python';
+}
+
+async function fetchAkshareQuotes(codes) {
+    return new Promise((resolve, reject) => {
+        console.log('尝试使用 Akshare 获取数据...');
+        const pythonCmd = getPythonCommand();
+        const scriptPath = path.join(__dirname, 'fetch_stock_akshare.py');
+        
+        const pythonProcess = spawn(pythonCmd, [scriptPath, codes.join(',')]);
+        
+        let dataString = '';
+        let errorString = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+            dataString += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+            const msg = data.toString();
+            if (msg.includes('Progress:')) {
+                console.log(`[Akshare] ${msg.trim()}`);
+            }
+            errorString += msg;
+        });
+
+        pythonProcess.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`Akshare process exited with code ${code}: ${errorString}`);
+                resolve({});
+                return;
+            }
+            try {
+                const result = JSON.parse(dataString);
+                resolve(result);
+            } catch (e) {
+                console.error('Akshare output parse error:', e);
+                resolve({});
+            }
+        });
+    });
+}
+
 async function fetchYahooQuotes(codes) {
     try {
         const symbols = codes.map(toYahooSymbol).filter(Boolean).join(',');
         const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}`;
         const res = await fetch(url);
+        if (res.status === 403) {
+            throw new Error('Yahoo 403 Forbidden');
+        }
         if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
         const data = await res.json();
         const results = (data && data.quoteResponse && data.quoteResponse.result) || [];
@@ -197,6 +253,9 @@ async function fetchYahooQuotes(codes) {
         return map;
     } catch (err) {
         console.warn('Yahoo quotes fetch failed:', err.message);
+        if (err.message === 'Yahoo 403 Forbidden') {
+            throw err;
+        }
         return {};
     }
 }
@@ -249,9 +308,36 @@ app.get('/api/stocks', async (req, res) => {
         const codes = codesParam
             ? codesParam.split(',').map(s => s.trim()).filter(Boolean)
             : ['600519','300750','601398','688981','000002','600036','002415','601127'];
+        
+        console.log(`[Stocks] Fetching for ${codes.length} codes...`);
+        
         let quoteMap = await fetchEastmoneyQuotes(codes);
-        if (!quoteMap || Object.keys(quoteMap).length === 0) {
-            quoteMap = await fetchYahooQuotes(codes);
+        const emCount = Object.keys(quoteMap).length;
+        console.log(`[Stocks] Eastmoney returned ${emCount} results`);
+
+        if (!quoteMap || emCount === 0) {
+            console.log('[Stocks] Eastmoney failed/empty, trying Yahoo...');
+            try {
+                quoteMap = await fetchYahooQuotes(codes);
+                const yahooCount = Object.keys(quoteMap).length;
+                console.log(`[Stocks] Yahoo returned ${yahooCount} results`);
+                
+                // 如果 Yahoo 返回空（可能是被 catch 吞掉的错误），也尝试 Akshare
+                if (yahooCount === 0) {
+                    console.log('[Stocks] Yahoo returned empty, switching to Akshare...');
+                    quoteMap = await fetchAkshareQuotes(codes);
+                }
+            } catch (err) {
+                console.warn(`[Stocks] Yahoo error caught: ${err.message}`);
+                if (err.message === 'Yahoo 403 Forbidden') {
+                    console.log('[Stocks] Yahoo 403, switching to Akshare...');
+                    quoteMap = await fetchAkshareQuotes(codes);
+                } else {
+                    // 其他错误也尝试 Akshare 作为最后的兜底
+                    console.log('[Stocks] Yahoo failed with other error, switching to Akshare...');
+                    quoteMap = await fetchAkshareQuotes(codes);
+                }
+            }
         }
         const list = codes.map(code => {
             const q = quoteMap[code];
@@ -353,17 +439,41 @@ function loadSeedStocksIfAvailable() {
     }
 }
 
+let isRefreshing = false;
+
 async function refreshQuotesForCache() {
     if (!stocksCache || stocksCache.length === 0) return;
+    if (isRefreshing) {
+        console.log('[Cache] 正在刷新中，跳过本次请求');
+        return;
+    }
+    isRefreshing = true;
     try {
         const codes = stocksCache.map(s => s.code);
         const chunkSize = 50;
         const updates = {};
-        for (let i = 0; i < codes.length; i += chunkSize) {
-            const chunk = codes.slice(i, i + chunkSize);
-            const map = await fetchYahooQuotes(chunk);
-            Object.assign(updates, map);
+        
+        // 尝试使用 Yahoo 批量更新
+        try {
+            for (let i = 0; i < codes.length; i += chunkSize) {
+                const chunk = codes.slice(i, i + chunkSize);
+                const map = await fetchYahooQuotes(chunk);
+                Object.assign(updates, map);
+            }
+        } catch (err) {
+            console.warn('[Cache] Yahoo 刷新失败:', err.message);
+            // 如果 Yahoo 失败，尝试使用 Akshare 全量更新
+            if (err.message === 'Yahoo 403 Forbidden' || Object.keys(updates).length === 0) {
+                console.log('[Cache] 切换到 Akshare 全量刷新...');
+                try {
+                    const akMap = await fetchAkshareQuotes(codes);
+                    Object.assign(updates, akMap);
+                } catch (akErr) {
+                    console.error('[Cache] Akshare 刷新失败:', akErr.message);
+                }
+            }
         }
+
         if (Object.keys(updates).length > 0) {
             stocksCache = stocksCache.map(s => {
                 const u = updates[s.code];
@@ -376,10 +486,12 @@ async function refreshQuotesForCache() {
             });
             lastCacheTime = Date.now();
             saveStocksCacheToFile();
-            console.log(`[Cache] 行情已刷新(Yahoo)，共更新 ${Object.keys(updates).length} 条`);
+            console.log(`[Cache] 行情已刷新，共更新 ${Object.keys(updates).length} 条`);
         }
     } catch (err) {
         console.warn('[Cache] 行情刷新失败:', err.message);
+    } finally {
+        isRefreshing = false;
     }
 }
 

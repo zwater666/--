@@ -883,7 +883,11 @@ if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
     
     // 所有未匹配的请求返回 index.html (支持前端路由)
-    app.get('*', (req, res) => {
+    app.get(/.*/, (req, res) => {
+        // 忽略 API 请求，避免 API 404 时返回 HTML
+        if (req.path.startsWith('/api')) {
+            return res.status(404).json({ error: 'API endpoint not found' });
+        }
         res.sendFile(path.join(distPath, 'index.html'));
     });
 }

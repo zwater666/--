@@ -24,7 +24,7 @@ const mockUsers = {
         id: 1,
         username: 'testuser',
         email: 'test@test.com',
-        password_hash: '$2a$10$YIjlrJxnM8XZ7Z7Z7Z7Z7eTZ7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z',
+        password_hash: '$2a$10$YIjlrJxnM8XZ7Z7Z7Z7Z7eTZ7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z7Z',
         risk_profile: 'medium',
         balance: 1000000
     }
@@ -875,8 +875,21 @@ app.post('/api/ai-analysis', authenticateToken, async (req, res) => {
     }
 });
 
+// 生产环境部署：服务静态文件
+// 检查 frontend/dist 是否存在，如果存在则提供静态文件服务
+const distPath = path.join(__dirname, 'frontend/dist');
+if (fs.existsSync(distPath)) {
+    console.log('📦 Serving static files from:', distPath);
+    app.use(express.static(distPath));
+    
+    // 所有未匹配的请求返回 index.html (支持前端路由)
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+}
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ Server running on port ${PORT}`);
     console.log(`\n📍 API 地址:`);
     console.log(`   - Health Check: http://localhost:${PORT}/api/health`);

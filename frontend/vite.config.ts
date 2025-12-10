@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  envPrefix: ['VITE_', 'REACT_APP_'],
   server: {
     host: '0.0.0.0', // 监听所有网卡，允许局域网访问
     port: 5173,
@@ -15,5 +16,12 @@ export default defineConfig({
       'localhost',
       'nutritional-integrate-designers-modes.trycloudflare.com'
     ],
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      }
+    }
   }
 })

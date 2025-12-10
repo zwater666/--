@@ -3,7 +3,7 @@
  * 支持重试、超时、错误处理和自动刷新
  */
 
-import CONFIG from '../../config.js';
+import CONFIG from '../config.js';
 
 class ApiClient {
   constructor() {

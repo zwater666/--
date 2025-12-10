@@ -3,14 +3,21 @@
  */
 
 // 从环境变量或默认值读取配置
-const API_URL = process.env.REACT_APP_API_URL || 
-               (typeof window !== 'undefined' && window.location.hostname === 'localhost' 
-                ? 'http://localhost:5000/api' 
+const getEnv = (key) => {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    return import.meta.env[key];
+  }
+  return undefined;
+};
+
+const API_URL = getEnv('REACT_APP_API_URL') || 
+               (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+                ? `http://${window.location.hostname}:5000/api` 
                 : '/api');
 
-const API_TIMEOUT = parseInt(process.env.REACT_APP_API_TIMEOUT || '10000');
-const API_RETRY_COUNT = parseInt(process.env.REACT_APP_API_RETRY || '3');
-const API_RETRY_DELAY = parseInt(process.env.REACT_APP_API_RETRY_DELAY || '1000');
+const API_TIMEOUT = parseInt(getEnv('REACT_APP_API_TIMEOUT') || '10000');
+const API_RETRY_COUNT = parseInt(getEnv('REACT_APP_API_RETRY') || '3');
+const API_RETRY_DELAY = parseInt(getEnv('REACT_APP_API_RETRY_DELAY') || '1000');
 
 const CONFIG = {
   // API 配置

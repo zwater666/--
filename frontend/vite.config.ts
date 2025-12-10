@@ -11,6 +11,7 @@ export default defineConfig({
     strictPort: false, // 如果 5173 被占用，自动使用其他端口
     // 允许隧道主机名访问（loca.lt 与 trycloudflare 临时域）
     allowedHosts: [
+      '120.26.19.196',
       'rotten-baboons-admire.loca.lt',
       'moody-donkeys-speak.loca.lt',
       'localhost',

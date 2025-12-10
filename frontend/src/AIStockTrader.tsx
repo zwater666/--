@@ -2,7 +2,8 @@ const getAPIURL = () => {
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
-  return 'http://localhost:5000/api';
+  // 默认使用相对路径，支持局域网访问
+  return '/api';
 };
 
 const API_URL = getAPIURL();
